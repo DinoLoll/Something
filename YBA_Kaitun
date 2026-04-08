@@ -1,7 +1,7 @@
 -- Made by @FayLolXP on Discord
 -- Please dont skid and monitize this
 
-getgenv().WebhookURL = 'https://discord.com/api/webhooks/1381173563612074085/mSPyu9_6PXn2TwNIzairPJqHnRgORN-YUGQNaj2h-f3ZMWLRxck9TCKdxbDIx6oejUOq'
+getgenv().WebhookURL = 'webhook_here'
 
 -- ###### 50+ ######
 getgenv().IdleKick = 30   -- kicks if no items spawn for this many seconds (30 is safe; items spawn ~every 15-20s)
