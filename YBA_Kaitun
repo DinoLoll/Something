@@ -1,10 +1,10 @@
 -- Made by @FayLolXP on Discord
 -- Please dont skid and monitize this
 
-getgenv().WebhookURL = 'webhook_here'
+getgenv().WebhookURL = 'https://discord.com/api/webhooks/1381173563612074085/mSPyu9_6PXn2TwNIzairPJqHnRgORN-YUGQNaj2h-f3ZMWLRxck9TCKdxbDIx6oejUOq'
 
 -- ###### 50+ ######
-getgenv().IdleKick = 8   -- kicks you if youre idle for a set amount of seconds (item farm)
+getgenv().IdleKick = 30   -- kicks if no items spawn for this many seconds (30 is safe; items spawn ~every 15-20s)
 getgenv().BuyLA    = true   -- buys lucky arrows for lvl 50+
 getgenv().AutoSell = true   -- auto sells items below for lvl 50+
 getgenv().AutoFarm = true   -- toggle the lvl 50+ item auto farm on/off
@@ -46,7 +46,7 @@ getgenv().lessPing         = false
 getgenv().autoRequiem      = true
 getgenv().NPCTimeOut       = 15
 getgenv().HamonCharge      = 90
-getgenv().AutoHamon        = true  -- toggle: false = skip buying hamon/zeppeli hat entirely
+getgenv().AutoHamon        = false  -- toggle: false = skip buying hamon/zeppeli hat entirely
 
 --########################################
 print("Waiting Loading")
@@ -492,20 +492,7 @@ local function GetItemInfo(Model)
 end
 
 getgenv().SpawnedItems = {}
-if ItemSpawnFolder then
-    ItemSpawnFolder.ChildAdded:Connect(function(Model)
-        task.wait(1)
-        if Model:IsA("Model") then
-            local ItemInfo = GetItemInfo(Model)
-            if ItemInfo then
-                getgenv().SpawnedItems[Model] = ItemInfo
-                print("Item detected: " .. ItemInfo.Name)
-            end
-        end
-    end)
-else
-    warn("ItemSpawnFolder does not exist, items will not be detected automatically")
-end
+-- ChildAdded listener is set up inside the farm loop below with the watchdog
 
 local XP_KEY = "  ___XP DE KEY"
 local oldNc
@@ -551,20 +538,33 @@ local cyclesCompleted = 0
 local maxCycles       = 1
 local maxCycleTime    = 60
 
--- ##### Idle watchdog #####
-local lastFarmActivity = tick()
+-- ##### Idle watchdog — only tracks time since last item spawned, not sell/buy activity #####
+-- IdleKick should be well above item spawn rate. 30s is safe: items spawn every ~15-20s.
+-- Setting it too low (like 8) kicks during normal sell/buy cycles that have no items queued.
+local lastItemSeen = tick()
+if ItemSpawnFolder then
+    ItemSpawnFolder.ChildAdded:Connect(function(Model)
+        task.wait(1)
+        if Model:IsA("Model") then
+            local ItemInfo = GetItemInfo(Model)
+            if ItemInfo then
+                getgenv().SpawnedItems[Model] = ItemInfo
+                lastItemSeen = tick()
+                print("Item detected: " .. ItemInfo.Name)
+            end
+        end
+    end)
+end
 task.spawn(function()
     while task.wait(1) do
-        if tick() - lastFarmActivity > getgenv().IdleKick then
-            print("Farm idle for " .. getgenv().IdleKick .. "s — kicking to restart")
+        if tick() - lastItemSeen > getgenv().IdleKick then
+            print("No items spawned for " .. getgenv().IdleKick .. "s — kicking to rejoin")
             LocalPlayer:Kick("Nothing Found — restarting")
         end
     end
 end)
 
 while true do
-    lastFarmActivity = tick()
-
     if ShouldStopFarming() then
         print("All conditions met, waiting...")
         repeat task.wait(5) until not ShouldStopFarming()
@@ -572,24 +572,9 @@ while true do
         cyclesCompleted = 0
     end
 
-    -- Pre-scan all items currently on the map and add to SpawnedItems
-    -- This is the key fix for speed: don't only rely on the ChildAdded listener
-    if ItemSpawnFolder then
-        for _, Model in pairs(ItemSpawnFolder:GetChildren()) do
-            if Model:IsA("Model") and not getgenv().SpawnedItems[Model] then
-                local ItemInfo = GetItemInfo(Model)
-                if ItemInfo then
-                    getgenv().SpawnedItems[Model] = ItemInfo
-                end
-            end
-        end
-    end
-
-    lastFarmActivity = tick()
-    print("=== Cycle #" .. (cyclesCompleted + 1) .. " | Items queued: " .. tostring(#(function() local n=0 for _ in pairs(getgenv().SpawnedItems) do n+=1 end return n end)()) .. " ===")
+    print("=== Cycle #" .. (cyclesCompleted + 1) .. " ===")
 
     for Index, ItemInfo in pairs(getgenv().SpawnedItems) do
-        lastFarmActivity = tick()
         local HumanoidRootPart = GetCharacter("HumanoidRootPart")
         if HumanoidRootPart then
             if not HasMaxItem(ItemInfo.Name) then
@@ -612,10 +597,8 @@ while true do
                 getgenv().SpawnedItems[Index] = nil
             end
         end
-        lastFarmActivity = tick()
     end
 
-    lastFarmActivity = tick()
     task.wait(3)
 
     local cycleStartTime = tick()
@@ -623,7 +606,6 @@ while true do
 
     if AutoSellF then
         for Item, Sell in pairs(SellItems) do
-            lastFarmActivity = tick()
             if Sell and Player.Backpack and Player.Backpack:FindFirstChild(Item) then
                 GetCharacter("Humanoid"):EquipTool(Player.Backpack:FindFirstChild(Item))
                 GetCharacter("RemoteEvent"):FireServer("EndDialogue", {
@@ -640,7 +622,6 @@ while true do
         print("Buying Lucky Arrows... (Money: $" .. Money.Value .. ")")
         local purchaseAttempts = 0
         while Money.Value >= 75000 and purchaseAttempts < 15 do
-            lastFarmActivity = tick()
             Player.Character.RemoteEvent:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
             task.wait(1)
             purchaseAttempts += 1
@@ -651,12 +632,11 @@ while true do
         end
     end
 
-    lastFarmActivity = tick()
     cyclesCompleted += 1
     print("Cycle completed (" .. cyclesCompleted .. "/" .. maxCycles .. ")")
 
     if tick() - cycleStartTime > maxCycleTime then
-        print("TIMEOUT: Cycle took too long, skipping cycle...")
+        print("TIMEOUT: Cycle took too long, skipping...")
         cyclesCompleted = 0
     end
 
@@ -667,12 +647,11 @@ while true do
             repeat task.wait(5) until not ShouldStopFarming()
             print("Resuming farm!")
         else
-            print("=== " .. maxCycles .. " cycles completed, starting next cycle ===")
+            print("=== " .. maxCycles .. " cycles completed, starting next ===")
             cyclesCompleted = 0
         end
     end
 
-    lastFarmActivity = tick()
     task.wait(2)
 end
 end
@@ -1208,9 +1187,10 @@ local function autoStory()
         autoStory()
 
     else
-        -- No matching quest found — server hop to find a new one
-        print("No matching quest found — teleporting to new server")
-        Teleport()
+        -- No matching quest — kick to rejoin and retry
+        print("No matching quest found — kicking to rejoin")
+        task.wait(2)
+        LocalPlayer:Kick("No quest match — rejoining")
     end
 end
 
