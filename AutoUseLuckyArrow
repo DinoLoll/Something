@@ -1,0 +1,42 @@
+-- U = use Lucky Arrow to learn Worthiness
+-- I = equip Rokakaka
+
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer      = Players.LocalPlayer
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local RemoteFunction = char:FindFirstChild("RemoteFunction")
+
+    if input.KeyCode == Enum.KeyCode.U then
+        local arrow = LocalPlayer.Backpack:FindFirstChild("Lucky Arrow")
+        if not arrow then
+            warn("No Lucky Arrow in backpack!")
+            return
+        end
+        if not RemoteFunction then
+            warn("RemoteFunction not found!")
+            return
+        end
+        print("Equipping Lucky Arrow and learning Worthiness...")
+        char.Humanoid:EquipTool(arrow)
+        task.wait(0.3)
+        RemoteFunction:InvokeServer("LearnSkill", { Skill = "Worthiness", SkillTreeType = "Character" })
+        print("Done!")
+
+    elseif input.KeyCode == Enum.KeyCode.I then
+        local roka = LocalPlayer.Backpack:FindFirstChild("Rokakaka")
+        if not roka then
+            warn("No Rokakaka in backpack!")
+            return
+        end
+        print("Equipping Rokakaka...")
+        char.Humanoid:EquipTool(roka)
+        print("Rokakaka equipped!")
+    end
+end)
+
+print("Loaded — U: Worthiness (Lucky Arrow) | I: Equip Rokakaka")
