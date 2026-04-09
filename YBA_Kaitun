@@ -4,7 +4,7 @@
 getgenv().WebhookURL = 'webhook_here'
 
 -- ###### 50+ ######
-getgenv().IdleKick = 30   -- kicks if no items spawn for this many seconds (30 is safe; items spawn ~every 15-20s)
+getgenv().IdleKick = 15   -- seconds with no new item before kicking to hop (15 = ~2 empty cycles)
 getgenv().BuyLA    = true   -- buys lucky arrows for lvl 50+
 getgenv().AutoSell = true   -- auto sells items below for lvl 50+
 getgenv().AutoFarm = true   -- toggle the lvl 50+ item auto farm on/off
@@ -49,8 +49,9 @@ getgenv().HamonCharge      = 90
 getgenv().AutoHamon        = false  -- toggle: false = skip buying hamon/zeppeli hat entirely
 
 --########################################
-print("Waiting Loading")
-task.wait(8.0)
+print("Waiting for game to load...")
+repeat task.wait(0.5) until game:IsLoaded()
+print("Game loaded!")
 
 local Players           = game:GetService("Players")
 local TeleportService   = game:GetService("TeleportService")
@@ -357,6 +358,7 @@ local MaxItemAmounts = {
     ["Quinton's Glove"]                = 10,
     ["Zeppeli's Hat"]                  = 10,
     ["Lucky Arrow"]                    = 10,
+    ["Lucky Stone Mask"]               = 10,  -- kept item, needs a max so AllKeepItemsFull works
     ["Clackers"]                       = 10,
     ["Steel Ball"]                     = 10,
     ["Dio's Diary"]                    = 10,
@@ -392,10 +394,10 @@ local function IsMoneyMaxed()   return Player.PlayerStats.Money.Value >= 1000000
 local function AllKeepItemsFull()
     local hasAnyKeepItem = false
     for Item, Sell in pairs(SellItems) do
-        if not Sell and Item ~= "Lucky Arrow" then
+        -- Skip Lucky Arrow and Lucky Stone Mask — they're rare and shouldn't block the farm
+        if not Sell and Item ~= "Lucky Arrow" and Item ~= "Lucky Stone Mask" then
             hasAnyKeepItem = true
             if not HasMaxItem(Item) then
-                print("Still need more: " .. Item)
                 return false
             end
         end
@@ -538,13 +540,22 @@ local cyclesCompleted = 0
 local maxCycles       = 1
 local maxCycleTime    = 60
 
--- ##### Idle watchdog — only tracks time since last item spawned, not sell/buy activity #####
--- IdleKick should be well above item spawn rate. 30s is safe: items spawn every ~15-20s.
--- Setting it too low (like 8) kicks during normal sell/buy cycles that have no items queued.
+-- Watchdog: safety net only — primary hopping is via ServerHop() every cycle
 local lastItemSeen = tick()
 if ItemSpawnFolder then
+    -- Scan items already on the map right now (ChildAdded misses these)
+    for _, Model in pairs(ItemSpawnFolder:GetChildren()) do
+        if Model:IsA("Model") then
+            local ItemInfo = GetItemInfo(Model)
+            if ItemInfo then
+                getgenv().SpawnedItems[Model] = ItemInfo
+                lastItemSeen = tick()
+                print("Pre-existing item found: " .. ItemInfo.Name)
+            end
+        end
+    end
+    -- Then listen for new ones as they spawn
     ItemSpawnFolder.ChildAdded:Connect(function(Model)
-        task.wait(1)
         if Model:IsA("Model") then
             local ItemInfo = GetItemInfo(Model)
             if ItemInfo then
@@ -558,7 +569,7 @@ end
 task.spawn(function()
     while task.wait(1) do
         if tick() - lastItemSeen > getgenv().IdleKick then
-            print("No items spawned for " .. getgenv().IdleKick .. "s — kicking to rejoin")
+            print("No items for " .. getgenv().IdleKick .. "s — kicking to rejoin")
             LocalPlayer:Kick("Nothing Found — restarting")
         end
     end
@@ -572,6 +583,7 @@ while true do
         cyclesCompleted = 0
     end
 
+    lastItemSeen = tick()
     print("=== Cycle #" .. (cyclesCompleted + 1) .. " ===")
 
     for Index, ItemInfo in pairs(getgenv().SpawnedItems) do
@@ -589,6 +601,7 @@ while true do
                 task.wait(.5)
                 fireproximityprompt(ProximityPrompt)
                 task.wait(.5)
+                lastItemSeen = tick() -- reset so watchdog doesn't fire while collecting
                 BodyVelocity:Destroy()
                 TeleportTo(CFrame.new(978, -42, -49))
                 task.wait(.3)
@@ -607,6 +620,7 @@ while true do
     if AutoSellF then
         for Item, Sell in pairs(SellItems) do
             if Sell and Player.Backpack and Player.Backpack:FindFirstChild(Item) then
+                lastItemSeen = tick()
                 GetCharacter("Humanoid"):EquipTool(Player.Backpack:FindFirstChild(Item))
                 GetCharacter("RemoteEvent"):FireServer("EndDialogue", {
                     NPC = "Merchant", Dialogue = "Dialogue5", Option = "Option2"
@@ -616,39 +630,48 @@ while true do
         end
     end
 
-    -- Buy Lucky Arrows
-    local Money = Player.PlayerStats.Money
-    if BuyLucky and not HasLuckyArrows() then
-        print("Buying Lucky Arrows... (Money: $" .. Money.Value .. ")")
-        local purchaseAttempts = 0
-        while Money.Value >= 75000 and purchaseAttempts < 15 do
-            Player.Character.RemoteEvent:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
-            task.wait(1)
-            purchaseAttempts += 1
-            local currentCount = CountLuckyArrows()
-            print("Lucky Arrows: " .. currentCount .. "/10")
-            if currentCount >= 10 then print("Max Lucky Arrows reached!") break end
-            if purchaseAttempts > 3 and currentCount == 9 then print("Could not purchase 10th Lucky Arrow") break end
-        end
-    end
-
     cyclesCompleted += 1
     print("Cycle completed (" .. cyclesCompleted .. "/" .. maxCycles .. ")")
 
     if tick() - cycleStartTime > maxCycleTime then
-        print("TIMEOUT: Cycle took too long, skipping...")
+        print("TIMEOUT — forcing hop...")
         cyclesCompleted = 0
+        ServerHop()
+        task.wait(10)
     end
 
     if cyclesCompleted >= maxCycles then
         if ShouldStopFarming() then
-            print("All conditions met! Waiting for conditions to change...")
+            print("All conditions met! Stopping server hop.")
             cyclesCompleted = 0
-            repeat task.wait(5) until not ShouldStopFarming()
-            print("Resuming farm!")
         else
-            print("=== " .. maxCycles .. " cycles completed, starting next ===")
+            -- Buy Lucky Arrows before hopping to a new server
+            local Money = Player.PlayerStats.Money
+            if BuyLucky and not HasLuckyArrows() then
+                print("Buying Lucky Arrows... ($" .. Money.Value .. ")")
+                local purchaseAttempts = 0
+                while Money.Value >= 75000 and purchaseAttempts < 15 do
+                    Player.Character.RemoteEvent:FireServer("PurchaseShopItem", { ItemName = "1x Lucky Arrow" })
+                    task.wait(1)
+                    purchaseAttempts += 1
+                    local currentCount = CountLuckyArrows()
+                    print("Lucky Arrows: " .. currentCount .. "/10")
+                    if currentCount >= 10 then print("Max Lucky Arrows reached!") break end
+                    if purchaseAttempts > 3 and currentCount == 9 then print("Could not get 10th Arrow") break end
+                end
+            end
+
+            print("=== " .. maxCycles .. " cycle(s) done — switching servers ===")
             cyclesCompleted = 0
+            local hopStart = tick()
+            ServerHop()
+            task.wait(10)
+            if tick() - hopStart < 15 then
+                print("Hop failed, retrying...")
+                task.wait(5)
+                ServerHop()
+                task.wait(10)
+            end
         end
     end
 
@@ -873,11 +896,8 @@ end
 local function farmItem(itemName, amount)
     local items = findItem(itemName)
 
-    -- If no items found on map, kick to rejoin fresh
     if #items.Position == 0 then
-        print("No " .. itemName .. " found on map — kicking to rejoin")
-        task.wait(1)
-        LocalPlayer:Kick("No items on map — rejoining")
+        print("No " .. itemName .. " found on map — none available right now")
         return false
     end
 
@@ -1096,14 +1116,23 @@ local function autoStory()
     elseif not getgenv().standList[LocalPlayer.PlayerStats.Stand.Value] and LocalPlayer.PlayerStats.Level.Value >= 3 and dontTPOnDeath then
         print("NO STAND?")
         task.wait(5)
-        farmItem("Rokakaka", 25)
-        farmItem("Mysterious Arrow", 25)
-        farmItem("Zeppeli's Hat", 1)
+
+        -- Keep trying to collect until we have enough, hopping servers if needed
+        local rokaNeeded  = 25 - countItems("Rokakaka")
+        local arrowNeeded = 25 - countItems("Mysterious Arrow")
+
+        if rokaNeeded > 0 then farmItem("Rokakaka", 25) end
+        if arrowNeeded > 0 then farmItem("Mysterious Arrow", 25) end
+        farmItem("Zeppeli's Hat", 1) -- optional
+
         if countItems("Mysterious Arrow") >= 25 and countItems("Rokakaka") >= 25 then
             print("MAX ARROW AND ROKA — ATTEMPTING STAND FARM")
             dontTPOnDeath = false
             attemptStandFarm()
         else
+            -- Still not enough after farming this server — hop to a new one and retry
+            -- Don't kick, just teleport so inventory carries over
+            print("Not enough items yet (" .. countItems("Rokakaka") .. " Roka, " .. countItems("Mysterious Arrow") .. " Arrow) — hopping server")
             Teleport()
         end
 
@@ -1173,8 +1202,8 @@ local function autoStory()
             pcall(function() delfile("AutoPres3_" .. LocalPlayer.Name .. ".txt") end)
         end
 
-    elseif questPanel:FindFirstChild("Take down 3 vampires") and LocalPlayer.PlayerStats.Spec.Value ~= "None"
-        and LocalPlayer.PlayerStats.Level.Value >= 25 and LocalPlayer.PlayerStats.Level.Value ~= 50 then
+    elseif questPanel:FindFirstChild("Take down 3 vampires") and LocalPlayer.PlayerStats.Level.Value >= 25
+        and LocalPlayer.PlayerStats.Level.Value ~= 50 then
         getgenv().HamonCharge = 10
         local function vampire()
             LocalPlayer.Character.PrimaryPart.CFrame = workspace.Living:FindFirstChild("Vampire").HumanoidRootPart.CFrame - Vector3.new(0, 15, 0)
