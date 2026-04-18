@@ -1,7 +1,7 @@
 -- Made by @FayLolXP on Discord
 -- Please dont skid and monitize this
 
-getgenv().WebhookURL = 'webhook_here'
+getgenv().WebhookURL = 'webhook'
 
 -- ###### 50+ ######
 getgenv().IdleKick = 15   -- seconds with no new item before kicking to hop (15 = ~2 empty cycles)
@@ -586,48 +586,48 @@ while true do
     lastItemSeen = tick()
     print("=== Cycle #" .. (cyclesCompleted + 1) .. " ===")
 
-    for Index, ItemInfo in pairs(getgenv().SpawnedItems) do
-        local HumanoidRootPart = GetCharacter("HumanoidRootPart")
-        if HumanoidRootPart then
+    -- Cache HRP once per cycle instead of calling GetCharacter() per item
+    local HumanoidRootPart = GetCharacter("HumanoidRootPart")
+    if HumanoidRootPart then
+        SetNoclip(true)
+        for Index, ItemInfo in pairs(getgenv().SpawnedItems) do
             if not HasMaxItem(ItemInfo.Name) then
                 local ProximityPrompt = ItemInfo.ProximityPrompt
                 local Position        = ItemInfo.Position
                 getgenv().SpawnedItems[Index] = nil
-                local BodyVelocity = Instance.new("BodyVelocity")
-                BodyVelocity.Parent   = HumanoidRootPart
-                BodyVelocity.Velocity = Vector3.new(0, 0, 0)
-                SetNoclip(true)
-                TeleportTo(CFrame.new(Position.X, Position.Y - 25, Position.Z))
-                task.wait(.5)
-                fireproximityprompt(ProximityPrompt)
-                task.wait(.5)
-                lastItemSeen = tick() -- reset so watchdog doesn't fire while collecting
-                BodyVelocity:Destroy()
-                TeleportTo(CFrame.new(978, -42, -49))
+                -- Teleport to item, fire prompt, move on — no return to base between items
+                HumanoidRootPart.CFrame = CFrame.new(Position.X, Position.Y - 25, Position.Z)
                 task.wait(.3)
-                SetNoclip(false)
+                fireproximityprompt(ProximityPrompt)
+                task.wait(.3)
+                lastItemSeen = tick()
             else
                 getgenv().SpawnedItems[Index] = nil
             end
         end
+        -- Return to base once after collecting all items
+        TeleportTo(CFrame.new(978, -42, -49))
+        SetNoclip(false)
     end
 
-    task.wait(3)
+    task.wait(1)
 
     local cycleStartTime = tick()
     print("Farm done, starting sell...")
 
     if AutoSellF then
+        local Humanoid  = GetCharacter("Humanoid")
+        local RemoteEv  = GetCharacter("RemoteEvent")
         for Item, Sell in pairs(SellItems) do
             if Sell and Player.Backpack and Player.Backpack:FindFirstChild(Item) then
                 lastItemSeen = tick()
-                GetCharacter("Humanoid"):EquipTool(Player.Backpack:FindFirstChild(Item))
-                GetCharacter("RemoteEvent"):FireServer("EndDialogue", {
+                Humanoid:EquipTool(Player.Backpack:FindFirstChild(Item))
+                RemoteEv:FireServer("EndDialogue", {
                     NPC = "Merchant", Dialogue = "Dialogue5", Option = "Option2"
                 })
-                task.wait(.1)
             end
         end
+        task.wait(.2) -- single wait after all sells instead of per-item
     end
 
     cyclesCompleted += 1
@@ -675,7 +675,7 @@ while true do
         end
     end
 
-    task.wait(2)
+    task.wait(0.5)
 end
 end
 end
@@ -1132,8 +1132,9 @@ local function autoStory()
         else
             -- Still not enough after farming this server — hop to a new one and retry
             -- Don't kick, just teleport so inventory carries over
-            print("Not enough items yet (" .. countItems("Rokakaka") .. " Roka, " .. countItems("Mysterious Arrow") .. " Arrow) — hopping server")
-            Teleport()
+            print("Not enough items yet (" .. countItems("Rokakaka") .. " Roka, " .. countItems("Mysterious Arrow") .. " Arrow) — kicking to hop")
+            task.wait(1)
+            LocalPlayer:Kick("Need more items — hopping server")
         end
 
     elseif questPanel:FindFirstChild("Defeat Leaky Eye Luca") and getgenv().standList[LocalPlayer.PlayerStats.Stand.Value] then
